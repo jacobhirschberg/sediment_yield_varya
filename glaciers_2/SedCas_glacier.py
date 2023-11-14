@@ -67,64 +67,28 @@ class SedCas():
         for i in range(self.n_HRU):
             s = mod.degree_day_model(self.Ta.copy(), self.Pr.copy(), self.mrate, self.Tsa, self.Tsm, s0=0, Asnow = self.Asnow[i], Asoil = self.Anosnow[i])
             snow.append(s)
-
-            print('s variable', s)
-            print('...')
-            print('...')
-            print('...')
-
+                        
             # glacier HRU:
             if self.HRUs[i] == 'glacier':
                 g = mod.degree_day_model(self.Ta.copy(), self.Pr.copy(), self.mrate, self.Tsa, self.Tsm, s0=100000, Asnow = self.Asnow[i], Asoil = self.Anosnow[i])
                 glacier.append(g) 
 
-                print('g variable', g)
-                print('...')
-                print('...')
-                print('...')
-
                 # glacier should only melt once the snow is gone:
-                g.smelt[s.depth > 0] = 0
-                # glacier "depth" is zero
-                g.depth = 0
-                
-                # destinguish between snow melt and ice melt
-                # g.snow_melt'] = np.where(h['snowacc'] < 0, h['snowacc']* -1, 0)
-                # hyd['snow_melt'] = hyd['snow_melt'] - hyd['glacier_melt']
-
-
-                s = s.add(g)  # add snow and glaciers together
-
-                print('s with g variable', s)
-                s
-                print('...')
-                print('...')
-                print('...')
+                glmelt = g.smelt.values
+                glmelt[s.depth > 0] = 0
+                s.smelt = s.smelt + glmelt # add glacier melt to snow melt
 
             pet = mod.ET_PT(1, self.Rsw, self.Ta, 1, s.albedo, self.Ele, 0.8, 1, 1, 1, 0, 0)
             PET.append(pet)
 
             h = mod.hydmod(s, pet, self.Pr, self.Ta, self.alphaET, len(self.Vwcaps[i]), {'k':self.ks[i], 'Scap':self.Vwcaps[i], 'S0':[0,0]})
             if self.HRUs[i] == 'glacier':
-                h['glacier_melt'] = g.smelt
-
-                # for the glacier HRU: snow melt vs glaceir melt
-                h['snow_melt'] = np.where(h['snowacc'] < 0, h['snowacc']* -1, 0)
-                h['snow_melt'] = h['snow_melt'] - h['glacier_melt']
+                h['glacier_melt'] = glmelt
                 
             else:
                 h['glacier_melt'] = 0
 
-                h['snow_melt'] = np.where(h['snowacc'] < 0, h['snowacc']* -1, 0)
-
             hydro.append(h)
-
-
-
-
-            # print('hydro variable', hydro)
-            # print('...')
-            # print('...')
 
         # lumped hydrology: adding individual HRUs
         hyd = pd.DataFrame(columns = hydro[0].columns, index =  hydro[0].index)
@@ -268,3 +232,13 @@ class SedCas():
         
         if save:
             fig.savefig('MonthlySedYield.pdf')
+
+    def water_balance(self):
+
+        delta_storage = self.hydro.Vw.values[-1] - self.hydro.Vw.values[0] + self.hydro.snow.values[-1] - self.hydro.snow.values[0]
+        inputs = self.hydro.Pr.sum()+ self.hydro.glacier_melt.sum()
+        outputs = self.hydro.AET.sum() + self.hydro.Q.sum()
+        error = inputs - outputs - delta_storage
+
+        print('water balance results in error of %.5f mm'%error)
+
